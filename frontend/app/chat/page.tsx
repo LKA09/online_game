@@ -13,6 +13,7 @@ type Message = {
   photoURL: string
   text: string
   createdAt: number
+  edited?: boolean
 }
 
 type OnlineUser = {
@@ -40,8 +41,12 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false)
   const [nicknameModal, setNicknameModal] = useState(false)
   const [nicknameInput, setNicknameInput] = useState('')
+  const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null)
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null)
+  const [editText, setEditText] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const editRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     return onAuthStateChanged(getAuthInstance(), async u => {
@@ -248,6 +253,34 @@ export default function ChatPage() {
     }
   }
 
+  async function deleteMessage(msgId: string) {
+    await remove(ref(getDb(), `chat/${msgId}`))
+  }
+
+  function startEdit(msgId: string, text: string) {
+    setEditingMsgId(msgId)
+    setEditText(text)
+    setTimeout(() => editRef.current?.focus(), 50)
+  }
+
+  function cancelEdit() {
+    setEditingMsgId(null)
+    setEditText('')
+  }
+
+  async function saveEdit(msgId: string) {
+    const trimmed = editText.trim()
+    if (!trimmed) return
+    await update(ref(getDb(), `chat/${msgId}`), { text: trimmed, edited: true })
+    setEditingMsgId(null)
+    setEditText('')
+  }
+
+  function handleEditKeyDown(e: React.KeyboardEvent, msgId: string) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(msgId) }
+    if (e.key === 'Escape') cancelEdit()
+  }
+
   if (!user) return (
     <div style={{ height: '100vh', background: '#0d0d0d', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.2)', fontSize: '0.875rem' }}>
       로딩 중...
@@ -394,8 +427,16 @@ export default function ChatPage() {
                 )
               }
 
+              const isEditing = editingMsgId === msg.id
+              const isHovered = hoveredMsgId === msg.id
+
               return (
-                <div key={msg.id} style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: 8, marginTop: showHeader ? 14 : 2 }}>
+                <div
+                  key={msg.id}
+                  onMouseEnter={() => setHoveredMsgId(msg.id)}
+                  onMouseLeave={() => setHoveredMsgId(null)}
+                  style={{ display: 'flex', flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: 8, marginTop: showHeader ? 14 : 2, position: 'relative' }}
+                >
                   {!isMe && (
                     <div style={{ width: 32, flexShrink: 0 }}>
                       {showHeader && (
@@ -410,12 +451,50 @@ export default function ChatPage() {
                       <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'rgba(255,255,255,0.3)', marginLeft: 2 }}>{msg.name}</span>
                     )}
                     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 5, flexDirection: isMe ? 'row-reverse' : 'row' }}>
-                      <div style={{ padding: '9px 13px', borderRadius: isMe ? '18px 18px 4px 18px' : '18px 18px 18px 4px', background: isMe ? '#fff' : 'rgba(255,255,255,0.08)', color: isMe ? '#000' : 'rgba(255,255,255,0.9)', fontSize: '0.875rem', lineHeight: 1.5, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
-                        {msg.text}
-                      </div>
-                      <span style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.18)', flexShrink: 0, paddingBottom: 2 }}>{time}</span>
+                      {isEditing ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 200 }}>
+                          <textarea
+                            ref={editRef}
+                            value={editText}
+                            onChange={e => setEditText(e.target.value)}
+                            onKeyDown={e => handleEditKeyDown(e, msg.id)}
+                            rows={2}
+                            style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 10, padding: '8px 12px', color: '#fff', fontSize: '0.875rem', resize: 'none', outline: 'none', fontFamily: 'inherit', lineHeight: 1.5, width: '100%', boxSizing: 'border-box' }}
+                          />
+                          <div style={{ display: 'flex', gap: 5, justifyContent: 'flex-end' }}>
+                            <button onClick={cancelEdit} style={{ padding: '4px 10px', borderRadius: 6, fontSize: '0.72rem', fontWeight: 700, background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.4)', border: 'none', cursor: 'pointer' }}>취소</button>
+                            <button onClick={() => saveEdit(msg.id)} disabled={!editText.trim()} style={{ padding: '4px 10px', borderRadius: 6, fontSize: '0.72rem', fontWeight: 700, background: editText.trim() ? '#fff' : 'rgba(255,255,255,0.06)', color: editText.trim() ? '#000' : 'rgba(255,255,255,0.2)', border: 'none', cursor: editText.trim() ? 'pointer' : 'default' }}>저장</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ padding: '9px 13px', borderRadius: isMe ? '18px 18px 4px 18px' : '18px 18px 18px 4px', background: isMe ? '#fff' : 'rgba(255,255,255,0.08)', color: isMe ? '#000' : 'rgba(255,255,255,0.9)', fontSize: '0.875rem', lineHeight: 1.5, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
+                          {msg.text}
+                          {msg.edited && <span style={{ fontSize: '0.65rem', opacity: 0.45, marginLeft: 5 }}>(수정됨)</span>}
+                        </div>
+                      )}
+                      {!isEditing && <span style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.18)', flexShrink: 0, paddingBottom: 2 }}>{time}</span>}
                     </div>
                   </div>
+
+                  {/* Action buttons — only own messages, on hover */}
+                  {isMe && isHovered && !isEditing && (
+                    <div style={{ position: 'absolute', top: 0, right: 44, display: 'flex', gap: 4, background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '3px 4px', boxShadow: '0 2px 8px rgba(0,0,0,0.4)' }}>
+                      <button
+                        onClick={() => startEdit(msg.id, msg.text)}
+                        title="수정"
+                        style={{ width: 26, height: 26, borderRadius: 5, background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'rgba(255,255,255,0.5)' }}
+                        onMouseOver={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
+                        onMouseOut={e => (e.currentTarget.style.background = 'none')}
+                      >✏️</button>
+                      <button
+                        onClick={() => deleteMessage(msg.id)}
+                        title="삭제"
+                        style={{ width: 26, height: 26, borderRadius: 5, background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'rgba(255,255,255,0.5)' }}
+                        onMouseOver={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.15)')}
+                        onMouseOut={e => (e.currentTarget.style.background = 'none')}
+                      >🗑️</button>
+                    </div>
+                  )}
                 </div>
               )
             })}
